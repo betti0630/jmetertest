@@ -1,31 +1,55 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-
+using Microsoft.EntityFrameworkCore;
 using System.Diagnostics;
+
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// PostgreSQL adatbázis
+builder.Services.AddDbContext<WebshopDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
+// Adatbázis inicializálás (újrapróbálkozással, amíg a DB elérhető lesz)
+var retryCount = 0;
+while (retryCount < 10)
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
+    try
+    {
+        using var scope = app.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<WebshopDbContext>();
+        db.Database.EnsureCreated();
+
+        if (!db.Products.Any())
+        {
+            var categories = new[] { "Elektronika", "Ruházat", "Élelmiszer", "Könyv" };
+            var seedProducts = Enumerable.Range(1, 100).Select(i => new Product
+            {
+                Name = $"Termék {i}",
+                Price = Random.Shared.Next(1000, 50000),
+                Stock = Random.Shared.Next(0, 100),
+                Category = categories[Random.Shared.Next(categories.Length)]
+            });
+            db.Products.AddRange(seedProducts);
+            db.SaveChanges();
+        }
+        break;
+    }
+    catch (Exception ex)
+    {
+        retryCount++;
+        Console.WriteLine($"Adatbázis kapcsolódás sikertelen ({retryCount}/10): {ex.Message}");
+        Thread.Sleep(2000);
+    }
 }
 
-// ============ "ADATBÁZIS" SZIMULÁCIÓ ============
-var products = Enumerable.Range(1, 100).Select(i => new Product
-{
-    Id = i,
-    Name = $"Termék {i}",
-    Price = Random.Shared.Next(1000, 50000),
-    Stock = Random.Shared.Next(0, 100),
-    Category = new[] { "Elektronika", "Ruházat", "Élelmiszer", "Könyv" }[Random.Shared.Next(4)]
-}).ToList();
+app.UseSwagger();
+app.UseSwaggerUI();
 
-var cart = new List<CartItem>();
-var orders = new List<Order>();
 var requestCount = 0;
 
 // ============ ENDPOINTOK ============
@@ -42,53 +66,44 @@ app.MapGet("/health", () =>
     });
 });
 
-// Összes termék listázása (gyors)
-app.MapGet("/api/products", async ([FromQuery] int limit = 20, [FromQuery] int offset = 0) =>
+// Összes termék listázása
+app.MapGet("/api/products", async ([FromQuery] int limit = 20, [FromQuery] int offset = 0, WebshopDbContext db = null!) =>
 {
     Interlocked.Increment(ref requestCount);
 
-    // Szimulált DB késleltetés: 50-150ms
-    await Task.Delay(Random.Shared.Next(50, 150));
-
-    var result = products.Skip(offset).Take(limit).ToList();
+    var result = await db.Products.Skip(offset).Take(limit).ToListAsync();
+    var total = await db.Products.CountAsync();
 
     return Results.Ok(new
     {
         Products = result,
-        Total = products.Count,
+        Total = total,
         Limit = limit,
         Offset = offset
     });
 });
 
-// Egy termék részletei (közepes sebesség)
-app.MapGet("/api/products/{id:int}", async (int id) =>
+// Egy termék részletei
+app.MapGet("/api/products/{id:int}", async (int id, WebshopDbContext db) =>
 {
     Interlocked.Increment(ref requestCount);
 
-    // Szimulált DB késleltetés: 100-300ms
-    await Task.Delay(Random.Shared.Next(100, 300));
-
-    var product = products.FirstOrDefault(p => p.Id == id);
+    var product = await db.Products.FindAsync(id);
 
     return product != null
         ? Results.Ok(product)
         : Results.NotFound(new { Error = "Termék nem található" });
 });
 
-// Termék keresése (lassú művelet - "komplex query")
-app.MapGet("/api/search", async ([FromQuery] string q = "") =>
+// Termék keresése
+app.MapGet("/api/search", async ([FromQuery] string q = "", WebshopDbContext db = null!) =>
 {
     Interlocked.Increment(ref requestCount);
 
-    // Szimulált komplex DB lekérdezés: 500-1500ms
-    await Task.Delay(Random.Shared.Next(500, 1500));
-
-    var results = products
-        .Where(p => p.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                    p.Category.Contains(q, StringComparison.OrdinalIgnoreCase))
+    var results = await db.Products
+        .Where(p => p.Name.Contains(q) || p.Category.Contains(q))
         .Take(10)
-        .ToList();
+        .ToListAsync();
 
     return Results.Ok(new
     {
@@ -99,14 +114,11 @@ app.MapGet("/api/search", async ([FromQuery] string q = "") =>
 });
 
 // Kosárba tétel (írási művelet)
-app.MapPost("/api/cart/add", async ([FromBody] AddToCartRequest request) =>
+app.MapPost("/api/cart/add", async ([FromBody] AddToCartRequest request, WebshopDbContext db) =>
 {
     Interlocked.Increment(ref requestCount);
 
-    // Szimulált DB írás: 200-400ms
-    await Task.Delay(Random.Shared.Next(200, 400));
-
-    var product = products.FirstOrDefault(p => p.Id == request.ProductId);
+    var product = await db.Products.FindAsync(request.ProductId);
 
     if (product == null)
         return Results.NotFound(new { Error = "Termék nem található" });
@@ -114,7 +126,7 @@ app.MapPost("/api/cart/add", async ([FromBody] AddToCartRequest request) =>
     if (product.Stock < request.Quantity)
         return Results.BadRequest(new { Error = "Nincs elegendő készlet" });
 
-    cart.Add(new CartItem
+    db.CartItems.Add(new CartItem
     {
         ProductId = request.ProductId,
         Quantity = request.Quantity,
@@ -122,77 +134,97 @@ app.MapPost("/api/cart/add", async ([FromBody] AddToCartRequest request) =>
     });
 
     product.Stock -= request.Quantity;
+    await db.SaveChangesAsync();
+
+    var cartCount = await db.CartItems.CountAsync(c => c.OrderId == null);
 
     return Results.Ok(new
     {
         Success = true,
-        Cart = cart.Count,
+        Cart = cartCount,
         Message = "Termék hozzáadva a kosárhoz"
     });
 });
 
 // Kosár tartalmának lekérése
-app.MapGet("/api/cart", async () =>
+app.MapGet("/api/cart", async (WebshopDbContext db) =>
 {
     Interlocked.Increment(ref requestCount);
 
-    await Task.Delay(Random.Shared.Next(100, 200));
+    var cartItems = await db.CartItems
+        .Where(c => c.OrderId == null)
+        .ToListAsync();
 
-    var cartWithDetails = cart.Select(item => new
+    var productIds = cartItems.Select(c => c.ProductId).Distinct().ToList();
+    var products = await db.Products
+        .Where(p => productIds.Contains(p.Id))
+        .ToDictionaryAsync(p => p.Id);
+
+    var cartWithDetails = cartItems.Select(item => new
     {
         item.ProductId,
         item.Quantity,
         item.AddedAt,
-        Product = products.FirstOrDefault(p => p.Id == item.ProductId)
+        Product = products.GetValueOrDefault(item.ProductId)
     }).ToList();
 
-    return Results.Ok(new { Cart = cartWithDetails, Total = cart.Count });
+    return Results.Ok(new { Cart = cartWithDetails, Total = cartItems.Count });
 });
 
-// Rendelés leadása (nagyon lassú - tranzakció szimuláció)
-app.MapPost("/api/order", async () =>
+// Rendelés leadása
+app.MapPost("/api/order", async (WebshopDbContext db) =>
 {
     Interlocked.Increment(ref requestCount);
 
-    // Szimulált komplex tranzakció: 1000-2000ms
-    await Task.Delay(Random.Shared.Next(1000, 2000));
+    var cartItems = await db.CartItems
+        .Where(c => c.OrderId == null)
+        .ToListAsync();
 
-    if (cart.Count == 0)
+    if (cartItems.Count == 0)
         return Results.BadRequest(new { Error = "A kosár üres" });
+
+    var productIds = cartItems.Select(c => c.ProductId).Distinct().ToList();
+    var products = await db.Products
+        .Where(p => productIds.Contains(p.Id))
+        .ToDictionaryAsync(p => p.Id);
 
     var order = new Order
     {
-        Id = orders.Count + 1,
-        Items = cart.ToList(),
         CreatedAt = DateTime.Now,
-        Total = cart.Sum(item =>
+        Total = cartItems.Sum(item =>
         {
-            var product = products.First(p => p.Id == item.ProductId);
+            var product = products[item.ProductId];
             return product.Price * item.Quantity;
         })
     };
 
-    orders.Add(order);
-    cart.Clear();
+    db.Orders.Add(order);
+    await db.SaveChangesAsync();
+
+    foreach (var item in cartItems)
+    {
+        item.OrderId = order.Id;
+    }
+    await db.SaveChangesAsync();
 
     return Results.Ok(new
     {
         Success = true,
-        Order = order,
+        Order = new { order.Id, order.CreatedAt, order.Total, Items = cartItems },
         Message = "Rendelés sikeresen leadva"
     });
 });
 
 // Statisztikák
-app.MapGet("/api/stats", () =>
+app.MapGet("/api/stats", async (WebshopDbContext db) =>
 {
     Interlocked.Increment(ref requestCount);
 
     return Results.Ok(new
     {
-        TotalProducts = products.Count,
-        TotalOrders = orders.Count,
-        CartItems = cart.Count,
+        TotalProducts = await db.Products.CountAsync(),
+        TotalOrders = await db.Orders.CountAsync(),
+        CartItems = await db.CartItems.CountAsync(c => c.OrderId == null),
         RequestCount = requestCount,
         Uptime = DateTime.Now - Process.GetCurrentProcess().StartTime
     });
@@ -217,7 +249,7 @@ Console.WriteLine(@"
 ╚═══════════════════════════════════════════════════════╝
 ");
 
-app.Run("http://localhost:5000");
+app.Run("http://0.0.0.0:5000");
 
 // ============ MODELLEK ============
 
@@ -232,9 +264,11 @@ record Product
 
 record CartItem
 {
+    public int Id { get; set; }
     public int ProductId { get; set; }
     public int Quantity { get; set; }
     public DateTime AddedAt { get; set; }
+    public int? OrderId { get; set; }
 }
 
 record Order
@@ -246,3 +280,14 @@ record Order
 }
 
 record AddToCartRequest(int ProductId, int Quantity);
+
+// ============ ADATBÁZIS KONTEXTUS ============
+
+class WebshopDbContext : DbContext
+{
+    public WebshopDbContext(DbContextOptions<WebshopDbContext> options) : base(options) { }
+
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<CartItem> CartItems => Set<CartItem>();
+    public DbSet<Order> Orders => Set<Order>();
+}
