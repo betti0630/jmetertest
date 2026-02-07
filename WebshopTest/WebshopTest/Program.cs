@@ -40,7 +40,7 @@ while (retryCount < 10)
             {
                 Name = $"Termék {i}",
                 Price = Random.Shared.Next(1000, 50000),
-                Stock = Random.Shared.Next(0, 100),
+                Stock = Random.Shared.Next(10, 100),
                 Category = categories[Random.Shared.Next(categories.Length)]
             });
             db.Products.AddRange(seedProducts);
@@ -93,11 +93,12 @@ app.MapGet("/api/products", async ([FromQuery] int limit = 20, [FromQuery] int o
 });
 
 // Összes termék listázása (Redis cache-ből)
-app.MapGet("/api/products/cached", async ([FromQuery] int limit = 20, [FromQuery] int offset = 0,
-    WebshopDbContext db = null!, IDistributedCache cache = null!) =>
+app.MapGet("/api/cached/products", async (HttpContext context, [FromQuery] int limit = 20, [FromQuery] int offset = 0,
+    WebshopDbContext db = null!) =>
 {
     Interlocked.Increment(ref requestCount);
 
+    var cache = context.RequestServices.GetRequiredService<IDistributedCache>();
     var cacheKey = $"products:{limit}:{offset}";
     var cached = await cache.GetStringAsync(cacheKey);
 
@@ -282,7 +283,7 @@ Console.WriteLine(@"
 ║  Elérhető endpointok:                                ║
 ║  • GET  /health                                      ║
 ║  • GET  /api/products                                ║
-║  • GET  /api/products/cached                         ║
+║  • GET  /api/cached/products                         ║
 ║  • GET  /api/products/{id}                           ║
 ║  • GET  /api/search?q=termék                         ║
 ║  • POST /api/cart/add                                ║

@@ -17,7 +17,7 @@ class WebshopUser(HttpUser):
     @task(10)
     def browse_products_cached(self):
         """Termékek böngészése - Redis cache-ből"""
-        self.client.get("/api/products/cached?limit=20", name="/api/products/cached")
+        self.client.get("/api/cached/products?limit=20", name="/api/cached/products")
 
     @task(5)
     def view_product(self):
