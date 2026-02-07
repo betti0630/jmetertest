@@ -29,8 +29,8 @@ services:
     build:
       context: ./WebshopTest
       dockerfile: WebshopTest/Dockerfile
-    ports:
-      - "5000:5000"
+    expose:
+      - "5000"
     environment:
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=webshop;Username=postgres;Password=postgres
       - ConnectionStrings__Redis=redis:6379
@@ -39,6 +39,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  haproxy:
+    image: haproxy:3.1
+    ports:
+      - "5000:5000"
+      - "8404:8404"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - api
 
 volumes:
   pgdata:
