@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="LoadTest/LoadTest.csproj" />
+  <Project Path="WebshopTest/WebshopTest.csproj" />
+</Solution>

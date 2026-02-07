@@ -1,0 +1,11 @@
+2026-02-07 15:46:54.364 +00:00 [INF] [ThreadId:1] NBomber 6.2.0 started a new session: 2026-02-07_15-46-54_388e219
+2026-02-07 15:46:54.483 +00:00 [INF] [ThreadId:1] NBomber started as single node
+2026-02-07 15:46:54.487 +00:00 [INF] [ThreadId:1] License validation....
+2026-02-07 15:46:54.488 +00:00 [WRN] [ThreadId:1] THIS VERSION IS FREE ONLY FOR PERSONAL USE. You can't use it for an organization.
+2026-02-07 15:46:54.811 +00:00 [INF] [ThreadId:1] Reports folder: /usr/share/dotnet/reports/2026-02-07_15-46-54_388e219
+2026-02-07 15:46:54.812 +00:00 [INF] [ThreadId:1] Plugins: no plugins were loaded
+2026-02-07 15:46:54.814 +00:00 [INF] [ThreadId:1] Reporting sinks: no reporting sinks were loaded
+2026-02-07 15:46:54.815 +00:00 [INF] [ThreadId:1] Starting init...
+2026-02-07 15:46:54.833 +00:00 [INF] [ThreadId:1] Target scenarios: browse_products, view_product, search
+2026-02-07 15:46:54.837 +00:00 [INF] [ThreadId:1] Init finished
+2026-02-07 15:46:55.172 +00:00 [INF] [ThreadId:1] Starting bombing...
