@@ -1,6 +1,8 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 using System.Diagnostics;
+using System.Text.Json;
 
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
@@ -11,6 +13,13 @@ builder.Services.AddSwaggerGen();
 // PostgreSQL adatbázis
 builder.Services.AddDbContext<WebshopDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// Redis cache
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = builder.Configuration.GetConnectionString("Redis");
+    options.InstanceName = "webshop:";
+});
 
 var app = builder.Build();
 
@@ -81,6 +90,39 @@ app.MapGet("/api/products", async ([FromQuery] int limit = 20, [FromQuery] int o
         Limit = limit,
         Offset = offset
     });
+});
+
+// Összes termék listázása (Redis cache-ből)
+app.MapGet("/api/products/cached", async ([FromQuery] int limit = 20, [FromQuery] int offset = 0,
+    WebshopDbContext db = null!, IDistributedCache cache = null!) =>
+{
+    Interlocked.Increment(ref requestCount);
+
+    var cacheKey = $"products:{limit}:{offset}";
+    var cached = await cache.GetStringAsync(cacheKey);
+
+    if (cached != null)
+    {
+        var cachedResult = JsonSerializer.Deserialize<object>(cached);
+        return Results.Ok(cachedResult);
+    }
+
+    var result = await db.Products.Skip(offset).Take(limit).ToListAsync();
+    var total = await db.Products.CountAsync();
+
+    var response = new
+    {
+        Products = result,
+        Total = total,
+        Limit = limit,
+        Offset = offset,
+        Source = "database"
+    };
+
+    await cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(response),
+        new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30) });
+
+    return Results.Ok(response);
 });
 
 // Egy termék részletei
@@ -240,6 +282,7 @@ Console.WriteLine(@"
 ║  Elérhető endpointok:                                ║
 ║  • GET  /health                                      ║
 ║  • GET  /api/products                                ║
+║  • GET  /api/products/cached                         ║
 ║  • GET  /api/products/{id}                           ║
 ║  • GET  /api/search?q=termék                         ║
 ║  • POST /api/cart/add                                ║

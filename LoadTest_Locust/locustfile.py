@@ -1,25 +1,37 @@
+# locustfile.py
 from locust import HttpUser, task, between
 import random
 
 class WebshopUser(HttpUser):
-    # Felhasználók 1-3 másodpercet várnak kérések között
     wait_time = between(1, 3)
-    
-    @task(10)  # 10x gyakoribb (böngészés)
+
+    def on_start(self):
+        """Felhasználó inicializálása"""
+        self.product_id = random.randint(1, 100)
+
+    @task(10)
     def browse_products(self):
+        """Termékek böngészése - közvetlen DB lekérés"""
         self.client.get("/api/products?limit=20")
-    
-    @task(5)  # 5x gyakoribb (termék megtekintés)
+
+    @task(10)
+    def browse_products_cached(self):
+        """Termékek böngészése - Redis cache-ből"""
+        self.client.get("/api/products/cached?limit=20", name="/api/products/cached")
+
+    @task(5)
     def view_product(self):
-        product_id = random.randint(1, 100)
-        self.client.get(f"/api/products/{product_id}")
-    
-    @task(3)  # 3x gyakoribb (keresés)
+        """Egyedi termék lekérése"""
+        self.client.get(f"/api/products/{self.product_id}")
+
+    @task(3)
     def search(self):
-        self.client.get("/api/search?q=elektronika")
-    
-    @task(1)  # 1x gyakoribb (kosárba tétel)
+        """Keresés - DB-heavy művelet"""
+        self.client.get("/api/search?q=Elektronika")
+
+    @task(1)
     def add_to_cart(self):
+        """Kosárba tétel"""
         self.client.post("/api/cart/add", json={
             "productId": random.randint(1, 100),
             "quantity": 1
